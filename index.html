@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Pulse</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+        }
+
+        canvas {
+            display: block;
+            background: radial-gradient(ellipse at center, #0a0015 0%, #000000 100%);
+        }
+
+        .ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #f0f;
+            text-shadow: 0 0 8px #f0f;
+            font-size: 14px;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,0,255,0.3);
+            z-index: 100;
+        }
+
+        .ui div {
+            margin-bottom: 8px;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background: rgba(0,0,0,0.7);
+            padding: 12px 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(0,255,255,0.3);
+            z-index: 100;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 10px;
+            color: #ff0;
+            text-transform: uppercase;
+        }
+
+        input[type="range"] {
+            width: 100px;
+            accent-color: #0ff;
+        }
+
+        button {
+            background: transparent;
+            border: 1px solid #0ff;
+            color: #0ff;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: rgba(0,255,255,0.1);
+            box-shadow: 0 0 10px rgba(0,255,255,0.3);
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #888;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        #beat-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid #f0f;
+            box-shadow: 0 0 20px #f0f;
+            transition: transform 0.05s;
+        }
+
+        .pulse {
+            animation: beatPulse 0.3s ease-out;
+        }
+
+        @keyframes beatPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="ui">
+        <div>Tempo: <span id="tempoDisplay">120</span> BPM</div>
+        <div>Beat: <span id="beatDisplay">1</span>/4</div>
+        <div>Orbs: <span id="orbCount">0</span></div>
+        <div>Mode: <span id="modeDisplay">4/4</span></div>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Tempo</label>
+            <input type="range" id="tempo" min="60" max="180" value="120">
+        </div>
+        <div class="control-group">
+            <label>Mode</label>
+            <button id="modeBtn">4/4</button>
+        </div>
+        <div class="control-group">
+            <label>Visual</label>
+            <button id="vizBtn">Rings</button>
+        </div>
+        <div class="control-group">
+            <label>Action</label>
+            <button id="clearBtn">Clear</button>
+        </div>
+    </div>
+
+    <div class="instructions">
+        Click to emphasize beat • Drag horizontally to adjust tempo • Watch the rhythm unfold
+    </div>
+
+    <div id="beat-indicator"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const beatIndicator = document.getElementById('beat-indicator');
+        const tempoSlider = document.getElementById('tempo');
+        const modeBtn = document.getElementById('modeBtn');
+        const vizBtn = document.getElementById('vizBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        let width, height;
+        let orbs = [];
+        let rings = [];
+        let currentBeat = 1;
+        let totalBeats = 4;
+        let tempo = 120;
+        let beatInterval;
+        let lastBeatTime = 0;
+        let visualMode = 'rings'; // 'rings', 'waves', 'orbits'
+        let isDragging = false;
+
+        const colors = ['#ff00ff', '#00ffff', '#ffff00', '#ff8800', '#00ff00'];
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        class Orb {
+            constructor(x, y, beat, totalBeats) {
+                this.x = x;
+                this.y = y;
+                this.baseRadius = 15;
+                this.radius = 15;
+                this.color = colors[beat % colors.length];
+                this.beat = beat;
+                this.totalBeats = totalBeats;
+                this.phase = 0;
+                this.pulsePhase = 0;
+                this.trail = [];
+                this.maxTrail = 20;
+            }
+
+            update() {
+                // Pulse radius
+                this.phase += 0.1;
+                this.radius = this.baseRadius + Math.sin(this.phase) * 5 + 5;
+
+                // Pulsing glow
+                this.pulsePhase += 0.2;
+                this.glowIntensity = 0.5 + Math.sin(this.pulsePhase) * 0.3;
+
+                // Store trail if in wave mode
+                if (visualMode === 'waves') {
+                    this.trail.push({ x: this.x, y: this.y, alpha: 1 });
+                    if (this.trail.length > this.maxTrail) this.trail.shift();
+                    this.trail.forEach(t => t.alpha *= 0.95);
+                }
+            }
+
+            draw() {
+                // Draw trail in wave mode
+                if (visualMode === 'waves') {
+                    this.trail.forEach((t, i) => {
+                        ctx.beginPath();
+                        ctx.arc(t.x, t.y, this.radius * 0.5, 0, Math.PI * 2);
+                        ctx.fillStyle = this.color.replace(')', `, ${t.alpha})`).replace('#', 'rgba(').replace('rgb', 'rgba');
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = this.color;
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    });
+                }
+
+                // Draw orb
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 20 * this.glowIntensity;
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Draw expanding rings if in rings mode
+                if (visualMode === 'rings') {
+                    const ringRadius = (Date.now() - this.spawnTime) / 10;
+                    const ringAlpha = Math.max(0, 1 - ringRadius / 300);
+                    if (ringAlpha > 0) {
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
+                        ctx.strokeStyle = this.color.replace(')', `, ${ringAlpha})`).replace('#', 'rgba(').replace('rgb', 'rgba');
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+
+                // Draw orbit arcs if in orbits mode
+                if (visualMode === 'orbits') {
+                    const orbitRadius = 50 + this.beat * 30;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, orbitRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = this.color.replace(')', ', 0.3)').replace('#', 'rgba(').replace('rgb', 'rgba');
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            }
+
+            spawn(time) {
+                this.spawnTime = time;
+            }
+        }
+
+        class ExpandingRing {
+            constructor(x, y, color, beat) {
+                this.x = x;
+                this.y = y;
+                this.radius = 0;
+                this.color = color;
+                this.beat = beat;
+                this.alpha = 1;
+                this.lineWidth = 3 + beat;
+            }
+
+            update() {
+                this.radius += 4;
+                this.alpha -= 0.008;
+            }
+
+            draw() {
+                if (this.alpha <= 0) return;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = this.color.replace(')', `, ${this.alpha})`).replace('#', 'rgba(').replace('rgb', 'rgba');
+                ctx.lineWidth = this.lineWidth;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            isDead() {
+                return this.alpha <= 0;
+            }
+        }
+
+        function createOrbsForBeat(beat, x, y) {
+            const count = 1;
+            for (let i = 0; i < count; i++) {
+                const offsetX = (Math.random() - 0.5) * 50;
+                const offsetY = (Math.random() - 0.5) * 50;
+                const orb = new Orb(
+                    (x || width/2) + offsetX,
+                    (y || height/2) + offsetY,
+                    beat,
+                    totalBeats
+                );
+                orb.spawn(Date.now());
+                orbs.push(orb);
+            }
+
+            // Create expanding ring
+            const color = colors[(beat-1) % colors.length];
+            rings.push(new ExpandingRing(x || width/2, y || height/2, color, beat));
+
+            // Remove excess orbs
+            while (orbs.length > 50) {
+                orbs.shift();
+            }
+        }
+
+        function nextBeat() {
+            currentBeat = (currentBeat % totalBeats) + 1;
+            lastBeatTime = Date.now();
+            beatInterval = 60000 / tempo;
+
+            // Beat indicator animation
+            beatIndicator.classList.remove('pulse');
+            void beatIndicator.offsetWidth;
+            beatIndicator.classList.add('pulse');
+
+            // Create orbs on beat
+            const centerX = width / 2;
+            const centerY = height / 2;
+            createOrbsForBeat(currentBeat, centerX, centerY);
+
+            // Update displays
+            document.getElementById('beatDisplay').textContent = currentBeat;
+            document.getElementById('orbCount').textContent = orbs.length;
+
+            // Schedule next beat
+            setTimeout(nextBeat, beatInterval);
+        }
+
+        function animate() {
+            // Fade background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, width, height);
+
+            // Update and draw orbs
+            orbs.forEach(orb => {
+                orb.update();
+                orb.draw();
+            });
+
+            // Update and draw rings
+            for (let i = rings.length - 1; i >= 0; i--) {
+                rings[i].update();
+                rings[i].draw();
+                if (rings[i].isDead()) rings.splice(i, 1);
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Interaction
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            if (e.button === 0) {
+                // Click: create emphasis beat
+                currentBeat = totalBeats; // emphasize final beat
+                createOrbsForBeat(currentBeat, e.clientX, e.clientY);
+                document.getElementById('beatDisplay').textContent = currentBeat;
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                // Adjust tempo based on drag X
+                const delta = e.movementX || 0;
+                tempo = Math.max(60, Math.min(180, tempo + delta * 0.5));
+                tempoSlider.value = Math.round(tempo);
+                document.getElementById('tempoDisplay').textContent = Math.round(tempo);
+                beatInterval = 60000 / tempo;
+            }
+        });
+
+        // Touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            createOrbsForBeat(totalBeats, touch.clientX, touch.clientY);
+        });
+
+        // Controls
+        tempoSlider.addEventListener('input', () => {
+            tempo = parseInt(tempoSlider.value);
+            document.getElementById('tempoDisplay').textContent = tempo;
+            beatInterval = 60000 / tempo;
+        });
+
+        modeBtn.addEventListener('click', () => {
+            const modes = [4, 3, 5, 7];
+            const currentIndex = modes.indexOf(totalBeats);
+            totalBeats = modes[(currentIndex + 1) % modes.length];
+            currentBeat = 1;
+            modeBtn.textContent = totalBeats + '/4';
+            document.getElementById('modeDisplay').textContent = totalBeats + '/4';
+        });
+
+        vizBtn.addEventListener('click', () => {
+            const modes = ['rings', 'waves', 'orbits'];
+            const currentIndex = modes.indexOf(visualMode);
+            visualMode = modes[(currentIndex + 1) % modes.length];
+            vizBtn.textContent = visualMode.charAt(0).toUpperCase() + visualMode.slice(1);
+        });
+
+        clearBtn.addEventListener('click', () => {
+            orbs = [];
+            rings = [];
+            document.getElementById('orbCount').textContent = '0';
+        });
+
+        // Initialize
+        resize();
+        animate();
+        nextBeat(); // start the beat
+    </script>
+</body>
+</html>
